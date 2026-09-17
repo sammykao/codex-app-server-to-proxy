@@ -37,6 +37,19 @@ import { withTempDir } from "../support/temp.js";
 /** Skips fake shebang executables that Windows cannot spawn without a shell. */
 const testWithPosixExecutable = test.skipIf(process.platform === "win32");
 
+test("HTTP mode disables WebSockets and both internal retry budgets", () => {
+  const args = appServerArguments(false, true);
+  assert.ok(args.includes('model_provider="proxy_http"'));
+  assert.ok(
+    args.includes("model_providers.proxy_http.supports_websockets=false"),
+  );
+  assert.ok(args.includes("model_providers.proxy_http.request_max_retries=0"));
+  assert.ok(args.includes("model_providers.proxy_http.stream_max_retries=0"));
+  assert.ok(
+    !appServerArguments().some((value) => value.includes("proxy_http")),
+  );
+});
+
 test("stderr logging drops fragmented expected cancellation diagnostics only", () => {
   const stderr = new PassThrough();
   const entries: Array<Record<string, unknown>> = [];
@@ -959,7 +972,7 @@ testWithPosixExecutable(
         startAppServer({
           codexPath: executable,
           root: directory,
-          startupTimeoutMs: 500,
+          startupTimeoutMs: 2000,
           shutdownTimeoutMs: 100,
           log: silentLogger,
         }),

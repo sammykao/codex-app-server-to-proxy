@@ -1,5 +1,9 @@
 # codex-openai-proxy
 
+This fork adds opt-in HTTP transport and caller-owned retries. Use
+`--http-only true` when a client scheduler handles backoff. Health checks remain
+available under load. See [the HTTP lane plan](plans/11-http-lanes.md).
+
 Use any OpenAI Chat Completions client with Codex. The proxy runs `codex app-server` locally, authenticates with your ChatGPT login, and serves a loopback-only OpenAI-compatible endpoint.
 
 > Prerelease. Text completions, streaming, function tools, usage metadata, thread continuation, and per-request Codex policy selection are implemented.

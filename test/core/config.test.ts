@@ -54,6 +54,12 @@ test("loopback validation accepts only exact safe forms", () => {
   }
 });
 
+test("HTTP-only transport is explicit and defaults off", () => {
+  assert.equal(parseServeOptions([]).httpOnly, false);
+  assert.equal(parseServeOptions(["--http-only", "true"]).httpOnly, true);
+  assert.throws(() => parseServeOptions(["--http-only", "maybe"]));
+});
+
 test("log-level validation accepts every supported value and rejects others", () => {
   for (const logLevel of LOG_LEVELS)
     assert.equal(

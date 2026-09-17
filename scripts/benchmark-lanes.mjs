@@ -23,6 +23,7 @@ import {
   retryAfterMilliseconds,
   fallbackDelay,
 } from "../dist/core/request-lanes.js";
+import { record } from "../dist/core/canonical.js";
 
 /** Writes private metadata atomically; checkpoints do not grow with attempts. */
 async function save(path, value) {
@@ -33,27 +34,38 @@ async function save(path, value) {
 }
 
 /** Measures this run's storage without inspecting unrelated user files. */
-async function treeBytes(directory) {
-  let bytes = 0;
+export async function storageStats(directory) {
+  const result = { bytes: 0, sqliteFiles: 0 };
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) bytes += await treeBytes(path);
-    else if (entry.isFile())
-      bytes += (await stat(path).catch(() => ({ size: 0 }))).size;
+    if (entry.isDirectory()) {
+      const child = await storageStats(path);
+      result.bytes += child.bytes;
+      result.sqliteFiles += child.sqliteFiles;
+    } else if (entry.isFile()) {
+      try { result.bytes += (await stat(path)).size; }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (/\.sqlite(?:-(?:wal|shm))?$/.test(entry.name)) result.sqliteFiles++;
+    }
   }
-  return bytes;
+  return result;
 }
 
-/** Counts real SQLite files and sidecars so no-persistence claims are measured. */
-async function sqliteFileCount(directory) {
-  let count = 0;
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isDirectory())
-      count += await sqliteFileCount(join(directory, entry.name));
-    else if (entry.isFile() && /\.sqlite(?:-(?:wal|shm))?$/.test(entry.name))
-      count++;
-  }
-  return count;
+/** Only a nonempty, finished assistant reply qualifies for this synthetic test. */
+export function confirmedCompletion(payload) {
+  const body = record(payload);
+  const choice = record(Array.isArray(body?.choices) ? body.choices[0] : undefined);
+  const message = record(choice?.message);
+  return !body?.error && choice?.finish_reason === "stop" && message?.role === "assistant" && typeof message.content === "string" && message.content.trim().length > 0;
+}
+
+/** Reads measured counters; missing or invalid values never become zero samples. */
+export function benchmarkTokenUsage(payload) {
+  const usage = record(record(payload)?.usage);
+  const prompt = usage?.prompt_tokens;
+  if (typeof prompt !== "number" || !Number.isFinite(prompt) || prompt < 0) return {};
+  const cached = record(usage.prompt_tokens_details)?.cached_tokens;
+  return { prompt, ...(typeof cached === "number" && Number.isFinite(cached) && cached >= 0 && cached <= prompt ? { cached } : {}) };
 }
 
 /** Validates live opt-in and workload bounds without making network calls. */
@@ -149,7 +161,7 @@ async function main() {
     );
     }
     const stop = new globalThis.AbortController();
-    const signalStop = () => stop.abort();
+    const signalStop = () => { report.stopReason = "interrupted"; stop.abort(); };
     process.once("SIGINT", signalStop);
     process.once("SIGTERM", signalStop);
     let proxy;
@@ -185,6 +197,7 @@ async function main() {
       ),
       promptTokens: 0,
       cachedTokens: 0,
+      cacheEligiblePromptTokens: 0,
       minimumPromptTokens: null,
       maximumInFlight: 0,
       stopReason: "duration",
@@ -306,22 +319,22 @@ async function main() {
           report.statuses[response.status] =
             (report.statuses[response.status] ?? 0) + 1;
           const now = Date.now();
-          if (response.ok && payload.choices?.[0]?.message) {
+          if (response.ok && confirmedCompletion(payload)) {
             report.successes++;
             const minute = Math.min(
               report.perMinuteSuccesses.length - 1,
               Math.floor((now - started) / 60000),
             );
             report.perMinuteSuccesses[minute]++;
-            const tokens = Number(payload.usage?.prompt_tokens ?? 0);
-            report.promptTokens += tokens;
-            report.cachedTokens += Number(
-              payload.usage?.prompt_tokens_details?.cached_tokens ?? 0,
-            );
-            report.minimumPromptTokens =
-              report.minimumPromptTokens === null
-                ? tokens
-                : Math.min(report.minimumPromptTokens, tokens);
+            const usage = benchmarkTokenUsage(payload);
+            if (usage.prompt !== undefined) {
+              report.promptTokens += usage.prompt;
+              report.minimumPromptTokens = report.minimumPromptTokens === null ? usage.prompt : Math.min(report.minimumPromptTokens, usage.prompt);
+              if (usage.cached !== undefined) {
+                report.cachedTokens += usage.cached;
+                report.cacheEligiblePromptTokens += usage.prompt;
+              }
+            }
             queue.succeed(
               assignment,
               now,
@@ -400,10 +413,11 @@ async function main() {
         if (Date.now() - lastCheckpoint > 5000) {
           lastCheckpoint = Date.now();
           const disk = await statfs(temporary);
-          const bytes = await treeBytes(temporary);
+          const storage = await storageStats(temporary);
+          const bytes = storage.bytes;
           report.peakSqliteFileCount = Math.max(
             report.peakSqliteFileCount,
-            await sqliteFileCount(temporary),
+            storage.sqliteFiles,
           );
           if (direct && report.peakSqliteFileCount > 0) {
             report.stopReason = "unexpected-sqlite";
@@ -463,8 +477,8 @@ async function main() {
           ? report.successes / 5
           : null;
       report.peakStorageBytes = peakStorageBytes;
-      report.cacheFraction = report.promptTokens
-        ? report.cachedTokens / report.promptTokens
+      report.cacheFraction = report.cacheEligiblePromptTokens
+        ? report.cachedTokens / report.cacheEligiblePromptTokens
         : null;
       report.finishedAt = new Date().toISOString();
       await save(out, report);

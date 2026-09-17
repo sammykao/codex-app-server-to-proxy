@@ -3,4 +3,5 @@ dist/
 node_modules/
 *.tgz
 coverage/
+lane-benchmark-*.json*
 .tmp/

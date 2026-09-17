@@ -3,6 +3,8 @@
 This fork adds opt-in HTTP transport and caller-owned retries. Use
 `--http-only true` when a client scheduler handles backoff. Health checks remain
 available under load. See [the HTTP lane plan](plans/11-http-lanes.md).
+The [lane guide](docs/request-lanes.md) covers scheduling, recovery and optional
+finite HTTP transport comparisons. Nothing launches a live test automatically.
 
 Use any OpenAI Chat Completions client with Codex. The proxy runs `codex app-server` locally, authenticates with your ChatGPT login, and serves a loopback-only OpenAI-compatible endpoint.
 

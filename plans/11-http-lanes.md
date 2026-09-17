@@ -43,3 +43,9 @@ Checkpoint restoration validates lane IDs, queued jobs, finite deadlines and
 unique assignments before clearing interrupted reservations. Malformed
 Retry-After values fall back to jitter rather than being parsed as numeric dates.
 These checks do not shorten a valid upstream cooldown or add a global pause.
+
+Storage accounting now uses one traversal for bytes and SQLite sidecars, without
+following symlinks. Benchmark accounting requires a finished nonempty assistant
+reply and measures cache fraction only over replies with both counters. Missing
+usage does not lower the minimum prompt size to zero. Operator interruptions are
+distinct from completed duration measurements.

@@ -86,6 +86,10 @@ errors and aborted requests. It includes completions per minute, HTTP status
 counts, error codes, token usage and observed Retry-After headers. Attempts count
 client requests to the adapter, not hidden upstream requests in default mode.
 Unfinished requests are cancelled at the deadline and are not counted as successes.
+For this synthetic workload, success requires a nonempty assistant reply with
+`finish_reason: stop`; an empty or unfinished HTTP 200 is not a success. Missing
+usage does not create a zero-token measurement. Cache fraction uses only replies
+with both measured prompt and cached-token counts. Interrupted runs are labeled.
 
 The runner stops early on an account usage limit, a proxy exit, less than 2 GiB
 free disk, or more than 1 GiB of test storage. It stops its child before deleting

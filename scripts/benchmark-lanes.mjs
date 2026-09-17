@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import { createServer } from "node:net";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   RequestLanes,
   retryAfterMilliseconds,
@@ -44,6 +44,18 @@ async function treeBytes(directory) {
   return bytes;
 }
 
+/** Counts real SQLite files and sidecars so no-persistence claims are measured. */
+async function sqliteFileCount(directory) {
+  let count = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory())
+      count += await sqliteFileCount(join(directory, entry.name));
+    else if (entry.isFile() && /\.sqlite(?:-(?:wal|shm))?$/.test(entry.name))
+      count++;
+  }
+  return count;
+}
+
 /** Validates live opt-in and workload bounds without making network calls. */
 export function benchmarkOptions(env) {
   if (env.STRESS_CONFIRM !== "I_UNDERSTAND_THIS_BURNS_SUBSCRIPTION_USAGE")
@@ -53,18 +65,26 @@ export function benchmarkOptions(env) {
   const duration = Number(env.BENCH_SECONDS ?? 300);
   const laneCount = Number(env.BENCH_LANES ?? 500);
   const httpOnly = env.BENCH_HTTP_ONLY ?? "true";
+  const transport = env.BENCH_TRANSPORT ?? "app-server";
+  if (!["app-server", "direct-http"].includes(transport))
+    throw new Error("Unknown benchmark transport.");
   if (!["true", "false"].includes(httpOnly))
     throw new Error("BENCH_HTTP_ONLY must be true or false.");
   if (!Number.isInteger(laneCount) || laneCount < 1 || laneCount > 500)
     throw new Error("Lane count must be 1–500.");
-  if (!Number.isInteger(duration) || duration < 1 || duration > 300)
-    throw new Error("Benchmark duration must be 1–300 seconds.");
+  const maximum = transport === "direct-http" ? 600 : 300;
+  if (!Number.isInteger(duration) || duration < 1 || duration > maximum)
+    throw new Error(`Benchmark duration must be 1–${maximum} seconds.`);
   return { duration, laneCount, httpOnly };
 }
 
 /** Creates an isolated, finite HTTP benchmark; never starts the old harness. */
 async function main() {
   const { duration, laneCount, httpOnly } = benchmarkOptions(process.env);
+  const direct = process.env.BENCH_TRANSPORT === "direct-http";
+  const maxAttempts = Number(process.env.BENCH_MAX_ATTEMPTS ?? 20000);
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20000)
+    throw new Error("Attempt cap must be 1–20,000.");
   // Refuse to attach to an unrelated process already using the test port.
   const probe = createServer();
   await new Promise((resolveProbe, rejectProbe) => {
@@ -104,6 +124,7 @@ async function main() {
       join(home, "auth.json"),
     );
     await chmod(join(home, "auth.json"), 0o600);
+    if (!direct) {
     // The pinned runtime does not parse newer catalog effort variants. Only
     // advertised effort metadata is filtered; model entitlement is unchanged.
     const catalog = JSON.parse(
@@ -126,6 +147,7 @@ async function main() {
       'cli_auth_credentials_store = "file"\n[history]\npersistence = "none"\n',
       { mode: 0o600 },
     );
+    }
     const stop = new globalThis.AbortController();
     const signalStop = () => stop.abort();
     process.once("SIGINT", signalStop);
@@ -138,7 +160,11 @@ async function main() {
       accountHash,
       model: "gpt-5.6-luna",
       reasoning: "none",
-      transport: httpOnly === "true" ? "HTTP" : "default",
+      transport: direct
+        ? "direct-http"
+        : httpOnly === "true"
+          ? "HTTP"
+          : "default",
       laneCount,
       contacts: 2000,
       turnsPerContact: 10,
@@ -163,6 +189,7 @@ async function main() {
       maximumInFlight: 0,
       stopReason: "duration",
       retryAfterSeen: 0,
+      peakSqliteFileCount: 0,
     };
     const queue = new RequestLanes(
       laneCount,
@@ -171,39 +198,48 @@ async function main() {
         turn: 0,
         readyAt: 0,
       })),
+      process.env.BENCH_RESUME
+        ? JSON.parse(await readFile(process.env.BENCH_RESUME, "utf8"))
+        : undefined,
     );
     const pending = new Set();
-    const context = "x ".repeat(67429);
+    const context = "x ".repeat(direct ? 75000 : 67429);
     let started;
     let lastCheckpoint = 0;
     try {
       proxy = spawn(
         process.execPath,
-        [
-          "dist/bin.js",
-          "serve",
-          "--root",
-          root,
-          "--codex-home",
-          home,
-          "--state-dir",
-          state,
-          "--sync-auth",
-          "never",
-          "--port",
-          "8793",
-          "--http-only",
-          httpOnly,
-          "--request-timeout",
-          "10m",
-          "--max-requests",
-          String(laneCount),
-          "--log-level",
-          "error",
-        ],
+        direct
+          ? [fileURLToPath(new URL("./direct-http-benchmark-proxy.mjs", import.meta.url))]
+          : [
+              "dist/bin.js",
+              "serve",
+              "--root",
+              root,
+              "--codex-home",
+              home,
+              "--state-dir",
+              state,
+              "--sync-auth",
+              "never",
+              "--port",
+              "8793",
+              "--http-only",
+              httpOnly,
+              "--request-timeout",
+              "10m",
+              "--max-requests",
+              String(laneCount),
+              "--log-level",
+              "error",
+            ],
         {
           cwd: process.cwd(),
-          env: { ...process.env, RUST_LOG: "error" },
+          env: {
+            ...process.env,
+            RUST_LOG: "error",
+            ...(direct ? { CODEX_HOME: home, BENCH_ACCOUNT_HASH: accountHash } : {}),
+          },
           stdio: ["ignore", "ignore", "pipe"],
         },
       );
@@ -294,7 +330,9 @@ async function main() {
             );
           } else if (
             [408, 425, 429, 500, 502, 503, 504].includes(response.status) &&
-            payload.error?.code !== "usage_limit_exceeded"
+            !/usage.limit|quota|insufficient.credits/i.test(
+              payload.error?.code ?? "",
+            )
           ) {
             report.retryableErrors++;
             const retryAfter = retryAfterMilliseconds(
@@ -346,16 +384,31 @@ async function main() {
           break;
         }
         let assignment;
-        while ((assignment = queue.take(Date.now()))) {
+        while (
+          report.attempts < maxAttempts &&
+          (assignment = queue.take(Date.now()))
+        ) {
           const operation = send(assignment);
           pending.add(operation);
           operation.finally(() => pending.delete(operation));
         }
         report.maximumInFlight = Math.max(report.maximumInFlight, pending.size);
+        if (report.attempts >= maxAttempts && pending.size === 0) {
+          report.stopReason = "attempt-cap";
+          break;
+        }
         if (Date.now() - lastCheckpoint > 5000) {
           lastCheckpoint = Date.now();
           const disk = await statfs(temporary);
           const bytes = await treeBytes(temporary);
+          report.peakSqliteFileCount = Math.max(
+            report.peakSqliteFileCount,
+            await sqliteFileCount(temporary),
+          );
+          if (direct && report.peakSqliteFileCount > 0) {
+            report.stopReason = "unexpected-sqlite";
+            break;
+          }
           peakStorageBytes = Math.max(peakStorageBytes, bytes);
           await save(`${out}.checkpoint.json`, queue.snapshot());
           await save(out, {

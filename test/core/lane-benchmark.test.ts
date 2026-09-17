@@ -34,3 +34,22 @@ test("A/B options cannot silently exceed the finite benchmark bounds", () => {
     assert.throws(() => benchmarkOptions({ ...env, BENCH_SECONDS: value }));
   assert.throws(() => benchmarkOptions({ ...env, BENCH_HTTP_ONLY: "invalid" }));
 });
+
+test("only the separate direct HTTP test allows a ten-minute segment", () => {
+  assert.equal(
+    benchmarkOptions({
+      ...env,
+      BENCH_TRANSPORT: "direct-http",
+      BENCH_SECONDS: "600",
+    }).duration,
+    600,
+  );
+  assert.throws(() =>
+    benchmarkOptions({
+      ...env,
+      BENCH_TRANSPORT: "direct-http",
+      BENCH_SECONDS: "601",
+    }),
+  );
+  assert.throws(() => benchmarkOptions({ ...env, BENCH_TRANSPORT: "unknown" }));
+});

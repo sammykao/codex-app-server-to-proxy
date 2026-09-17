@@ -5,6 +5,8 @@ This fork adds opt-in HTTP transport and caller-owned retries. Use
 available under load. See [the HTTP lane plan](plans/11-http-lanes.md).
 The [lane guide](docs/request-lanes.md) covers scheduling, recovery and optional
 finite HTTP transport comparisons. Nothing launches a live test automatically.
+The synthetic direct-HTTP benchmark avoids app-server SQLite entirely; it is not
+a production replacement for tools, managed policies or login refresh.
 
 Use any OpenAI Chat Completions client with Codex. The proxy runs `codex app-server` locally, authenticates with your ChatGPT login, and serves a loopback-only OpenAI-compatible endpoint.
 

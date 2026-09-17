@@ -59,6 +59,14 @@ test("Retry-After seconds and dates are honored without a maximum cap", () => {
   assert.ok(fallbackDelay(429, 4, 0) > fallbackDelay(503, 1, 0));
 });
 
+test("restored checkpoints preserve absolute lane cooldown deadlines", () => {
+  const queue = new RequestLanes(1, jobs(2));
+  queue.retry(queue.take(0)!, 0, 900000);
+  const restored = new RequestLanes(1, [], queue.snapshot());
+  assert.equal(restored.take(899999), undefined);
+  assert.equal(restored.take(900000)?.lane.id, 0);
+});
+
 test("nonretryable jobs release lanes and invalid input is rejected", () => {
   assert.throws(() => new RequestLanes(0, []));
   assert.throws(() => new RequestLanes(501, []));

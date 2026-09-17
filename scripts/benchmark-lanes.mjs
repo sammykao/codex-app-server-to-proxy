@@ -24,6 +24,7 @@ import {
   fallbackDelay,
 } from "../dist/core/request-lanes.js";
 import { record } from "../dist/core/canonical.js";
+import { tokenUsageCount } from "../dist/core/token-usage.js";
 
 /** Writes private metadata atomically; checkpoints do not grow with attempts. */
 async function save(path, value) {
@@ -62,10 +63,10 @@ export function confirmedCompletion(payload) {
 /** Reads measured counters; missing or invalid values never become zero samples. */
 export function benchmarkTokenUsage(payload) {
   const usage = record(record(payload)?.usage);
-  const prompt = usage?.prompt_tokens;
-  if (typeof prompt !== "number" || !Number.isFinite(prompt) || prompt < 0) return {};
-  const cached = record(usage.prompt_tokens_details)?.cached_tokens;
-  return { prompt, ...(typeof cached === "number" && Number.isFinite(cached) && cached >= 0 && cached <= prompt ? { cached } : {}) };
+  const prompt = tokenUsageCount(usage?.prompt_tokens);
+  if (prompt === undefined) return {};
+  const cached = tokenUsageCount(record(usage.prompt_tokens_details)?.cached_tokens);
+  return { prompt, ...(cached !== undefined && cached <= prompt ? { cached } : {}) };
 }
 
 /** Validates live opt-in and workload bounds without making network calls. */

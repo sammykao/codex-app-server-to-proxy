@@ -49,3 +49,8 @@ following symlinks. Benchmark accounting requires a finished nonempty assistant
 reply and measures cache fraction only over replies with both counters. Missing
 usage does not lower the minimum prompt size to zero. Operator interruptions are
 distinct from completed duration measurements.
+
+Token-counter validation is shared between cumulative attribution, last-request
+fallback, the direct adapter and benchmark sampling. Only nonnegative safe
+integers are exact JavaScript counters. Invalid required counters omit usage;
+invalid optional counters omit their details. Zero remains a valid measurement.

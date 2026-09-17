@@ -64,7 +64,14 @@ test("the benchmark rejects empty, unfinished and error-shaped HTTP 200 bodies",
 
 test("missing and malformed counters are not invented measurements", () => {
   assert.deepEqual(benchmarkTokenUsage({}), {});
-  for (const value of [-1, NaN, Infinity, "75000"])
+  for (const value of [
+    -1,
+    NaN,
+    Infinity,
+    "75000",
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
     assert.deepEqual(
       benchmarkTokenUsage({ usage: { prompt_tokens: value } }),
       {},

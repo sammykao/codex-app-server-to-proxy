@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test, vi } from "vitest";
 import { request as httpRequest, type Server } from "node:http";
+import { setTimeout as wait } from "node:timers/promises";
 import {
   createDirectBenchmarkServer,
   outputText,
@@ -104,6 +105,29 @@ test("unavailable usage is omitted, not replaced with estimated zero counts", as
   const body = await (await post(url)).json();
   assert.deepEqual(body.usage, { prompt_tokens: 75 });
 });
+
+test.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  "direct usage omits invalid counts without failing a completed reply: %s",
+  async (count) => {
+    const url = await start(async () =>
+      stream({
+        type: "response.completed",
+        response: {
+          status: "completed",
+          output: [message("{}")],
+          usage: {
+            input_tokens: 75,
+            output_tokens: count,
+            total_tokens: count,
+            input_tokens_details: { cached_tokens: count },
+          },
+        },
+      }),
+    );
+    const body = await (await post(url)).json();
+    assert.deepEqual(body.usage, { prompt_tokens: 75 });
+  },
+);
 
 test.each([429, 502, 503])(
   "real upstream %i and Retry-After survive translation",
@@ -303,3 +327,37 @@ test("transport exceptions are redacted and the released slot is reusable", asyn
   assert(!JSON.stringify(await first.json()).includes("secret transcript"));
   assert.equal((await post(url)).status, 200);
 });
+
+test("500 occupied slots reject extra work while probes remain usable", async () => {
+  const release: Array<() => void> = [];
+  const provider: typeof fetch = async (_url, options) =>
+    new Promise<Response>((resolve, reject) => {
+      const abort = () => reject(new Error("synthetic cancellation"));
+      options?.signal?.addEventListener("abort", abort, { once: true });
+      release.push(() => {
+        options?.signal?.removeEventListener("abort", abort);
+        resolve(
+          stream({
+            type: "response.completed",
+            response: { status: "completed", output: [message("{}")] },
+          }),
+        );
+      });
+    });
+  const url = await start(provider);
+  const clients = Array.from({ length: 500 }, () => post(url));
+  const deadline = Date.now() + 10000;
+  try {
+    while (release.length < 500 && Date.now() < deadline) await wait(10);
+    assert.equal(release.length, 500);
+    assert.equal((await fetch(`${url}/ready`)).status, 200);
+    const overflow = await post(url);
+    assert.equal(overflow.status, 429);
+    assert.equal(overflow.headers.get("retry-after"), "1");
+    assert.equal(release.length, 500);
+  } finally {
+    for (const finish of release) finish();
+    const responses = await Promise.all(clients);
+    await Promise.all(responses.map((response) => response.arrayBuffer()));
+  }
+}, 15000);

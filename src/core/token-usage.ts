@@ -27,7 +27,14 @@ export const ZERO_TOKEN_USAGE: Readonly<TokenUsageCounters> = {
   totalTokens: 0,
 };
 
-/** Reads one complete finite nonnegative counter snapshot. */
+/** Accepts only nonnegative integers JavaScript can represent exactly. */
+export function tokenUsageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+/** Reads one complete exact nonnegative counter snapshot. */
 export function tokenUsageCounters(
   value: unknown,
 ): TokenUsageCounters | undefined {
@@ -35,9 +42,8 @@ export function tokenUsageCounters(
   if (!breakdown) return undefined;
   const result = {} as TokenUsageCounters;
   for (const name of TOKEN_USAGE_COUNTERS) {
-    const count = breakdown[name];
-    if (typeof count !== "number" || !Number.isFinite(count) || count < 0)
-      return undefined;
+    const count = tokenUsageCount(breakdown[name]);
+    if (count === undefined) return undefined;
     result[name] = count;
   }
   return result;

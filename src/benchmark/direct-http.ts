@@ -2,6 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { record } from "../core/canonical.js";
 import { listenForAbort } from "../core/abort.js";
+import { tokenUsageCount } from "../core/token-usage.js";
 
 /** Fixed benchmark model; this is not a general-purpose provider. */
 const MODEL = "gpt-5.6-luna";
@@ -402,19 +403,19 @@ export function createDirectBenchmarkServer(
         ...(usage
           ? {
               usage: {
-                ...(typeof usage.input_tokens === "number"
+                ...(tokenUsageCount(usage.input_tokens) !== undefined
                   ? { prompt_tokens: usage.input_tokens }
                   : {}),
-                ...(typeof usage.output_tokens === "number"
+                ...(tokenUsageCount(usage.output_tokens) !== undefined
                   ? { completion_tokens: usage.output_tokens }
                   : {}),
-                ...(typeof usage.total_tokens === "number"
+                ...(tokenUsageCount(usage.total_tokens) !== undefined
                   ? { total_tokens: usage.total_tokens }
                   : {}),
-                ...(typeof details?.cached_tokens === "number"
+                ...(tokenUsageCount(details?.cached_tokens) !== undefined
                   ? {
                       prompt_tokens_details: {
-                        cached_tokens: details.cached_tokens,
+                        cached_tokens: details?.cached_tokens,
                       },
                     }
                   : {}),

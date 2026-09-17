@@ -4,6 +4,7 @@ import type { Logger } from "../core/logger.js";
 import {
   subtractTokenUsage,
   tokenUsageCounters,
+  tokenUsageCount,
   type TokenUsageCounters,
 } from "../core/token-usage.js";
 import type { StoredToolCall } from "../continuation/state.js";
@@ -686,9 +687,9 @@ function countersToUsage(value: TokenUsageCounters): Usage {
  * turn whose frames have already been committed.
  */
 function toUsage(value: Record<string, unknown>): Usage | undefined {
-  const input = finite(value.inputTokens);
-  const output = finite(value.outputTokens);
-  const total = finite(value.totalTokens);
+  const input = tokenUsageCount(value.inputTokens);
+  const output = tokenUsageCount(value.outputTokens);
+  const total = tokenUsageCount(value.totalTokens);
   if (input === undefined || output === undefined || total === undefined)
     return undefined;
   const result: Usage = {
@@ -696,11 +697,13 @@ function toUsage(value: Record<string, unknown>): Usage | undefined {
     completion_tokens: output,
     total_tokens: total,
   };
-  if (typeof value.cachedInputTokens === "number")
-    result.prompt_tokens_details = { cached_tokens: value.cachedInputTokens };
-  if (typeof value.reasoningOutputTokens === "number")
+  const cached = tokenUsageCount(value.cachedInputTokens);
+  const reasoning = tokenUsageCount(value.reasoningOutputTokens);
+  if (cached !== undefined)
+    result.prompt_tokens_details = { cached_tokens: cached };
+  if (reasoning !== undefined)
     result.completion_tokens_details = {
-      reasoning_tokens: value.reasoningOutputTokens,
+      reasoning_tokens: reasoning,
     };
   return result;
 }
@@ -744,11 +747,4 @@ export function isEstablishedUnrelatedNotification(
   if (!params) return false;
   if (threadId && params.threadId !== threadId) return true;
   return Boolean(turnId && notificationTurnId(params) !== turnId);
-}
-
-/** Returns a usage count only when app-server reported it exactly. */
-function finite(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }

@@ -94,6 +94,24 @@ home or truncates a live SQLite database. A stopped or shortened run is not a
 five-minute sustained-RPM measurement. Reports and checkpoints remain outside
 the repository. It does not update any existing running-total file automatically.
 
+For a local segmented run, `BENCH_RESUME` accepts a checkpoint from a stopped
+executor, and `BENCH_MAX_ATTEMPTS` sets a segment cap (default 20,000). Each segment
+still has a maximum duration of 300 seconds. Carry lane deadlines across segments;
+include startup and cleanup time in the overall wall-clock RPM.
+
+The included synthetic adapter uses `BENCH_TRANSPORT=direct-http`. That mode can run for
+600 seconds and uses at least 75K synthetic context with no app-server or SQLite.
+It is not a production transport: tools, managed execution policies, OAuth refresh
+and conversation continuation are outside its scope. The normal proxy remains
+unchanged. The runner measures actual SQLite file counts and stops if any appear.
+
+The direct adapter retains no transcripts and writes no files. Requests are limited
+to 1 MiB and upstream responses to 2 MiB, with at most 500 requests in flight.
+Memory depends on concurrent work, not the lifetime request count. The runner
+overwrites its report and checkpoint; new runs create new reports unless you
+reuse an output path. Keep reports outside the repo and apply your own retention.
+The direct mode needs only `auth.json`; the normal mode also needs the model cache.
+
 ## Repeat the transport A/B test
 
 Use the same workload for both arms, one after another. These commands are

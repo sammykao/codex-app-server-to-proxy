@@ -5,6 +5,24 @@ import { mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, vi } from "vitest";
+
+test("intermediate retry notifications do not finish a turn", () => {
+  const normalizer = new EventNormalizer();
+  assert.deepEqual(
+    normalizer.normalize("error", {
+      willRetry: true,
+      error: { message: "retrying" },
+    }),
+    [],
+  );
+  assert.equal(
+    normalizer.normalize("error", {
+      willRetry: false,
+      error: { message: "exceeded retry limit, last status: 429" },
+    })[0]?.terminalError?.status,
+    429,
+  );
+});
 import {
   EventNormalizer,
   HANDLED_NOTIFICATION_METHODS,

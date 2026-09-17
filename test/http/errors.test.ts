@@ -2,8 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import {
   serverOverloadedError,
+  upstreamRateLimitError,
   toolCorrelationErrorForStatus,
 } from "../../src/http/errors.js";
+
+test("explicit terminal upstream 429 stays distinct from generic app-server failure", () => {
+  assert.equal(
+    upstreamRateLimitError(
+      "exceeded retry limit, last status: 429 Too Many Requests",
+    )?.status,
+    429,
+  );
+  assert.equal(
+    upstreamRateLimitError("exceeded retry limit, last status: 502"),
+    undefined,
+  );
+});
 
 test("HTTP statuses map to stable OpenAI error types", () => {
   for (const [status, type] of [

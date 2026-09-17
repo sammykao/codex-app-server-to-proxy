@@ -30,6 +30,8 @@ export interface ServeOptions {
   root: string;
   codexPath: string;
   subagentsEnabled: boolean;
+  /** Forces HTTP and leaves transient retry scheduling to the caller. */
+  httpOnly?: boolean;
   implicitToolContinuation: boolean;
   requestTimeoutMs: number;
   shutdownTimeoutMs: number;
@@ -232,6 +234,7 @@ export function parseServeOptions(
     "--root",
     "--codex-path",
     "--subagents",
+    "--http-only",
     "--implicit-tool-continuation",
     "--request-timeout",
     "--shutdown-timeout",
@@ -269,6 +272,7 @@ export function parseServeOptions(
     port: integer("--port", values.get("--port") ?? "8787", 0, 65_535),
     root,
     codexPath: values.get("--codex-path") ?? "codex",
+    httpOnly: boolean("--http-only", values.get("--http-only") ?? "false"),
     subagentsEnabled: boolean(
       "--subagents",
       values.get("--subagents") ?? "false",

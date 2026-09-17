@@ -10,6 +10,7 @@ import type { StoredToolCall } from "../continuation/state.js";
 import {
   appServerError,
   serverOverloadedError,
+  upstreamRateLimitError,
   type HttpError,
 } from "./errors.js";
 import { usageLimitError } from "./quota.js";
@@ -287,6 +288,8 @@ export class EventNormalizer {
       return usage ? [{ usage }] : [];
     }
     if (method === "error") {
+      // Intermediate errors are followed by an app-server retry, not a failure.
+      if (params.willRetry === true) return [];
       const error = record(params.error);
       return [terminalEvent(error, "The app-server turn failed.")];
     }
@@ -472,6 +475,7 @@ function terminalEvent(
     terminalError:
       usageLimitError(error, message) ??
       serverOverloadedError(error, message) ??
+      upstreamRateLimitError(message) ??
       appServerError(message),
   };
 }

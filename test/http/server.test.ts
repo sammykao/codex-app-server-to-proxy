@@ -72,6 +72,16 @@ test("health is live while readiness remains false", async () => {
   });
 });
 
+test("probes stay available with no model-request capacity", async () => {
+  await withServer({ maxRequests: 0 }, async (origin, proxy) => {
+    assert.equal((await fetch(`${origin}/health`)).status, 200);
+    assert.equal((await fetch(`${origin}/ready`)).status, 503);
+    proxy.setReady(true);
+    assert.equal((await fetch(`${origin}/ready`)).status, 200);
+    assert.equal((await fetch(`${origin}/v1/models`)).status, 429);
+  });
+});
+
 test("every route rejects missing, malformed, and non-loopback Host headers", async () => {
   await withServer({}, async (origin) => {
     const url = new URL(origin);
@@ -385,10 +395,13 @@ test("an incomplete request receives the configured timeout error", async () => 
  * counts a request against capacity only after accepting it and releases
  * capacity only after observing the disconnect.
  */
-async function pollHealth(origin: string, expected: number): Promise<Response> {
+async function pollCapacity(
+  origin: string,
+  expected: number,
+): Promise<Response> {
   const deadline = Date.now() + 5_000;
   for (;;) {
-    const response = await fetch(`${origin}/health`);
+    const response = await fetch(`${origin}/capacity-probe`);
     if (response.status === expected || Date.now() >= deadline) return response;
     await response.arrayBuffer();
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -406,7 +419,7 @@ test("capacity rejects with overloaded and a disconnect releases it", async () =
         "Content-Type: application/json\r\n" +
         "Content-Length: 2\r\n\r\n",
     );
-    const overloaded = await pollHealth(origin, 429);
+    const overloaded = await pollCapacity(origin, 429);
     assert.equal(overloaded.status, 429);
     assert.equal(
       ((await overloaded.json()) as { error: { code: string } }).error.code,
@@ -414,8 +427,8 @@ test("capacity rejects with overloaded and a disconnect releases it", async () =
     );
     socket.destroy();
     await once(socket, "close");
-    const response = await pollHealth(origin, 200);
-    assert.equal(response.status, 200);
+    const response = await pollCapacity(origin, 404);
+    assert.equal(response.status, 404);
   });
 });
 
@@ -504,9 +517,9 @@ test("a timed-out backpressured stream releases its concurrency slot", async () 
       });
 
       await blockedWrite;
-      assert.equal((await pollHealth(origin, 429)).status, 429);
+      assert.equal((await pollCapacity(origin, 429)).status, 429);
       await clientClosed;
-      assert.equal((await pollHealth(origin, 200)).status, 200);
+      assert.equal((await pollCapacity(origin, 404)).status, 404);
     },
   );
 });

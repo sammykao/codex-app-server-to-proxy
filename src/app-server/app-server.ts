@@ -125,6 +125,8 @@ export interface StartAppServerOptions {
   codexPath: string;
   /** Whether the child process may expose tools that spawn subagents. */
   subagentsEnabled?: boolean | undefined;
+  /** Selects HTTP transport with no hidden upstream retries. */
+  httpOnly?: boolean | undefined;
   /** Codex home for the child; isolates its caches and auth from ~/.codex. */
   codexHome?: string | undefined;
   /**
@@ -141,7 +143,10 @@ export interface StartAppServerOptions {
 }
 
 /** Builds app-server arguments with an explicit fail-closed subagent policy. */
-export function appServerArguments(subagentsEnabled = false): string[] {
+export function appServerArguments(
+  subagentsEnabled = false,
+  httpOnly = false,
+): string[] {
   const enabled = String(subagentsEnabled);
   // Both the stable agent setting and its feature gate are explicit so a
   // custom config.toml cannot silently broaden or narrow the selected policy.
@@ -151,6 +156,18 @@ export function appServerArguments(subagentsEnabled = false): string[] {
     `agents.enabled=${enabled}`,
     "-c",
     `features.multi_agent=${enabled}`,
+    ...(httpOnly
+      ? [
+          'model_provider="proxy_http"',
+          'model_providers.proxy_http.name="ChatGPT HTTP"',
+          'model_providers.proxy_http.base_url="https://chatgpt.com/backend-api/codex"',
+          'model_providers.proxy_http.wire_api="responses"',
+          "model_providers.proxy_http.requires_openai_auth=true",
+          "model_providers.proxy_http.supports_websockets=false",
+          "model_providers.proxy_http.request_max_retries=0",
+          "model_providers.proxy_http.stream_max_retries=0",
+        ].flatMap((value) => ["-c", value])
+      : []),
   ];
 }
 
@@ -195,7 +212,10 @@ export async function startAppServer(
   if (options.signal?.aborted) throw abortReason(options.signal);
   const child = spawnProcess(
     invocation.command,
-    [...invocation.prefixArgs, ...appServerArguments(options.subagentsEnabled)],
+    [
+      ...invocation.prefixArgs,
+      ...appServerArguments(options.subagentsEnabled, options.httpOnly),
+    ],
     {
       cwd: options.root,
       env,

@@ -38,6 +38,7 @@ Options:
   --root <directory>            Allowed working-directory root (default: launch directory)
   --codex-path <path>           Override the package-owned Codex executable
   --subagents <true|false>      Allow child-agent spawning (default: false)
+  --http-only <true|false>      Use HTTP with caller-owned retries (default: false)
   --codex-home <directory>      Codex home for the spawned app-server
                                 (default: ${DEFAULT_CODEX_HOME_DESCRIPTION})
   --sync-auth <always|never>
@@ -172,6 +173,7 @@ class AppServerSupervisor {
       const next = await startAppServer({
         codexPath: this.#options.codexPath,
         subagentsEnabled: this.#options.subagentsEnabled,
+        httpOnly: this.#options.httpOnly,
         codexHome: this.#options.codexHome,
         seedAuthFrom: seedSource,
         root: this.#options.root,

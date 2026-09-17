@@ -89,6 +89,19 @@ export function createProxyServer(
       return;
     }
     // Reject before allocating per-request resources when capacity is full.
+    // Probes consume no model slot and must remain usable under saturation.
+    if (
+      request.method === "GET" &&
+      (url?.pathname === "/health" || url?.pathname === "/ready")
+    ) {
+      const health = url.pathname === "/health";
+      const code = health || ready ? 200 : 503;
+      writeJson(response, code, {
+        status: health ? "ok" : ready ? "ready" : "not_ready",
+      });
+      logRequest(code);
+      return;
+    }
     if (active >= options.maxRequests) {
       const overloaded = new HttpError(
         429,

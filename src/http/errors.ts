@@ -64,6 +64,13 @@ export function appServerError(message: string): HttpError {
   return new HttpError(502, message, "server_error", "app_server_error");
 }
 
+/** Preserves an explicit terminal upstream 429 rather than disguising it as 502. */
+export function upstreamRateLimitError(message: string): HttpError | undefined {
+  if (!/exceeded retry limit, last status: 429\b/i.test(message))
+    return undefined;
+  return new HttpError(429, message, "rate_limit_error", "upstream_rate_limit");
+}
+
 /**
  * Recognizes the app-server TurnError that reports exhausted upstream model
  * capacity. It is transient and unrelated to the account's own quota, so it

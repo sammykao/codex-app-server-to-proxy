@@ -1,3 +1,5 @@
+import { record } from "./canonical.js";
+
 /** Persistent lane state, independent of whichever contact it last served. */
 export interface RequestLane {
   id: number;
@@ -31,11 +33,82 @@ export function retryAfterMilliseconds(
   value: string | null,
   now: number,
 ): number | undefined {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-  const instant = Date.parse(value);
+  if (!value?.trim()) return undefined;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) {
+    const milliseconds = Number(text) * 1000;
+    return Number.isSafeInteger(milliseconds) ? milliseconds : undefined;
+  }
+  // Date.parse accepts negative numbers, ISO dates and other non-header text.
+  // Only HTTP date forms may take the date path; malformed headers use jitter.
+  if (
+    !/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:day|sday|nesday|rsday|urday)?[, ]/.test(
+      text,
+    )
+  )
+    return undefined;
+  const instant = Date.parse(text);
   return Number.isFinite(instant) ? Math.max(0, instant - now) : undefined;
+}
+
+/** Validates queued metadata before it can drive lane assignment. */
+function validJobs(value: unknown): value is LaneJob[] {
+  return (
+    Array.isArray(value) &&
+    value.every((value: unknown) => {
+      const job = record(value);
+      return (
+        job &&
+        typeof job.id === "string" &&
+        job.id.length > 0 &&
+        typeof job.turn === "number" &&
+        Number.isSafeInteger(job.turn) &&
+        job.turn >= 0 &&
+        typeof job.readyAt === "number" &&
+        Number.isFinite(job.readyAt) &&
+        job.readyAt >= 0
+      );
+    }) &&
+    new Set(value.map((job) => job.id)).size === value.length
+  );
+}
+
+/** Rejects corrupt checkpoints instead of restoring a silently stuck queue. */
+function validSnapshot(value: unknown, count: number): value is LaneSnapshot {
+  const snapshot = record(value);
+  if (
+    !snapshot ||
+    snapshot.version !== 1 ||
+    !validJobs(snapshot.jobs) ||
+    !Array.isArray(snapshot.lanes) ||
+    snapshot.lanes.length !== count
+  )
+    return false;
+  const jobs = new Set(snapshot.jobs.map((job) => job.id));
+  const assigned = new Set<string>();
+  return snapshot.lanes.every((value: unknown, id: number) => {
+    const lane = record(value);
+    if (
+      !lane ||
+      lane.id !== id ||
+      typeof lane.readyAt !== "number" ||
+      !Number.isFinite(lane.readyAt) ||
+      lane.readyAt < 0 ||
+      typeof lane.failures !== "number" ||
+      !Number.isSafeInteger(lane.failures) ||
+      lane.failures < 0
+    )
+      return false;
+    if (lane.jobId === null) return true;
+    if (
+      typeof lane.jobId !== "string" ||
+      !jobs.has(lane.jobId) ||
+      assigned.has(lane.jobId)
+    )
+      return false;
+    assigned.add(lane.jobId);
+    return true;
+  });
 }
 
 /** Provides jittered backoff only when no upstream timing survived translation. */
@@ -64,10 +137,9 @@ export class RequestLanes {
   constructor(count: number, jobs: LaneJob[], saved?: LaneSnapshot) {
     if (!Number.isInteger(count) || count < 1 || count > 500)
       throw new Error("Lane count must be between 1 and 500.");
-    if (new Set(jobs.map((job) => job.id)).size !== jobs.length)
-      throw new Error("Duplicate contact job.");
-    if (saved && (saved.version !== 1 || saved.lanes.length !== count))
-      throw new Error("Checkpoint does not match lane count.");
+    if (!validJobs(jobs)) throw new Error("Invalid or duplicate contact job.");
+    if (saved !== undefined && !validSnapshot(saved, count))
+      throw new Error("Invalid checkpoint or mismatched lane count.");
     this.jobs = structuredClone(saved?.jobs ?? jobs);
     this.lanes = saved
       ? structuredClone(saved.lanes)

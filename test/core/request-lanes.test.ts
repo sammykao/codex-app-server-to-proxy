@@ -5,6 +5,7 @@ import {
   retryAfterMilliseconds,
   fallbackDelay,
 } from "../../src/core/request-lanes.js";
+import type { LaneSnapshot } from "../../src/core/request-lanes.js";
 
 /** Builds contact jobs without real personal data. */
 function jobs(count: number) {
@@ -57,6 +58,43 @@ test("Retry-After seconds and dates are honored without a maximum cap", () => {
   assert.equal(retryAfterMilliseconds(null, 0), undefined);
   assert.equal(retryAfterMilliseconds("0", 0), 0);
   assert.ok(fallbackDelay(429, 4, 0) > fallbackDelay(503, 1, 0));
+});
+
+test.each(["-1", " ", "1.5", "1e308", "0x10", "Infinity", "2026-09-17"])(
+  "malformed Retry-After uses fallback rather than an immediate retry: %s",
+  (value) => {
+    assert.equal(retryAfterMilliseconds(value, 0), undefined);
+  },
+);
+
+test("corrupt checkpoints fail before restoring unusable scheduler state", () => {
+  const valid = new RequestLanes(2, jobs(3)).snapshot();
+  const invalid: unknown[] = [
+    null,
+    {},
+    { ...valid, jobs: null },
+    { ...valid, lanes: null },
+    { ...valid, jobs: [valid.jobs[0], valid.jobs[0]] },
+    { ...valid, lanes: [{ ...valid.lanes[0], id: 1 }, valid.lanes[1]] },
+    {
+      ...valid,
+      lanes: [{ ...valid.lanes[0], readyAt: Infinity }, valid.lanes[1]],
+    },
+    { ...valid, lanes: [{ ...valid.lanes[0], failures: -1 }, valid.lanes[1]] },
+    {
+      ...valid,
+      lanes: [{ ...valid.lanes[0], jobId: "missing" }, valid.lanes[1]],
+    },
+    {
+      ...valid,
+      lanes: valid.lanes.map((lane) => ({ ...lane, jobId: "contact-0" })),
+    },
+    { ...valid, jobs: [{ ...valid.jobs[0], turn: -1 }] },
+    { ...valid, jobs: [{ ...valid.jobs[0], readyAt: NaN }] },
+  ];
+  for (const snapshot of invalid)
+    assert.throws(() => new RequestLanes(2, [], snapshot as LaneSnapshot));
+  assert.throws(() => new RequestLanes(1, [{ id: "", turn: 0, readyAt: 0 }]));
 });
 
 test("restored checkpoints preserve absolute lane cooldown deadlines", () => {

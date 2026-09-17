@@ -38,3 +38,8 @@ memory, exact upstream statuses and Retry-After. It omits unavailable usage and
 redacts transport exceptions. Per-request limits are 1 MiB input and 2 MiB upstream
 response; reports and checkpoints are overwritten, not appended. Reports from
 different runs remain until the operator removes or archives them.
+
+Checkpoint restoration validates lane IDs, queued jobs, finite deadlines and
+unique assignments before clearing interrupted reservations. Malformed
+Retry-After values fall back to jitter rather than being parsed as numeric dates.
+These checks do not shorten a valid upstream cooldown or add a global pause.
